@@ -99,7 +99,7 @@ trait TransportResponseTrait
     /**
      * Performs all pending non-blocking operations.
      */
-    abstract protected static function perform(ClientState $multi, array &$responses): void;
+    abstract protected static function perform(ClientState $multi, array $responses): void;
 
     /**
      * Waits for network activity.
@@ -157,10 +157,15 @@ trait TransportResponseTrait
         $lastActivity = microtime(true);
         $elapsedTimeout = 0;
 
-        if ($fromLastTimeout = 0.0 === $timeout && '-0' === (string) $timeout) {
-            $timeout = null;
-        } elseif ($fromLastTimeout = 0 > $timeout) {
-            $timeout = -$timeout;
+        if ((0.0 === $timeout && '-0' === (string) $timeout) || 0 > $timeout) {
+            $timeout = $timeout ? -$timeout : null;
+
+            /** @var ClientState $multi */
+            foreach ($runningResponses as [$multi]) {
+                if (null !== $multi->lastTimeout) {
+                    $elapsedTimeout = max($elapsedTimeout, $lastActivity - $multi->lastTimeout);
+                }
+            }
         }
 
         while (true) {
@@ -169,8 +174,7 @@ trait TransportResponseTrait
             $timeoutMin = $timeout ?? \INF;
 
             /** @var ClientState $multi */
-            foreach ($runningResponses as $i => [$multi]) {
-                $responses = &$runningResponses[$i][1];
+            foreach ($runningResponses as $i => [$multi, &$responses]) {
                 self::perform($multi, $responses);
 
                 foreach ($responses as $j => $response) {
@@ -178,25 +182,25 @@ trait TransportResponseTrait
                     $timeoutMin = min($timeoutMin, $response->timeout, 1);
                     $chunk = false;
 
-                    if ($fromLastTimeout && null !== $multi->lastTimeout) {
-                        $elapsedTimeout = microtime(true) - $multi->lastTimeout;
-                    }
-
                     if (isset($multi->handlesActivity[$j])) {
                         $multi->lastTimeout = null;
+                        $elapsedTimeout = 0;
                     } elseif (!isset($multi->openHandles[$j])) {
+                        $hasActivity = true;
                         unset($responses[$j]);
                         continue;
                     } elseif ($elapsedTimeout >= $timeoutMax) {
                         $multi->handlesActivity[$j] = [new ErrorChunk($response->offset, sprintf('Idle timeout reached for "%s".', $response->getInfo('url')))];
                         $multi->lastTimeout ?? $multi->lastTimeout = $lastActivity;
+                        $elapsedTimeout = $timeoutMax;
                     } else {
                         continue;
                     }
 
+                    $lastActivity = null;
+                    $hasActivity = true;
+
                     while ($multi->handlesActivity[$j] ?? false) {
-                        $hasActivity = true;
-                        $elapsedTimeout = 0;
 
                         if (\is_string($chunk = array_shift($multi->handlesActivity[$j]))) {
                             if (null !== $response->inflate && false === $chunk = @inflate_add($response->inflate, $chunk)) {
@@ -234,7 +238,6 @@ trait TransportResponseTrait
                             }
                         } elseif ($chunk instanceof ErrorChunk) {
                             unset($responses[$j]);
-                            $elapsedTimeout = $timeoutMax;
                         } elseif ($chunk instanceof FirstChunk) {
                             if ($response->logger) {
                                 $info = $response->getInfo();
@@ -281,10 +284,12 @@ trait TransportResponseTrait
                     if ($chunk instanceof ErrorChunk && !$chunk->didThrow()) {
                         // Ensure transport exceptions are always thrown
                         $chunk->getContent();
+                        throw new \LogicException('A transport exception should have been thrown.');
                     }
                 }
 
                 if (!$responses) {
+                    $hasActivity = true;
                     unset($runningResponses[$i]);
                 }
 
@@ -298,7 +303,7 @@ trait TransportResponseTrait
             }
 
             if ($hasActivity) {
-                $lastActivity = microtime(true);
+                $lastActivity ??= hrtime(true) / 1E9;
                 continue;
             }
 
