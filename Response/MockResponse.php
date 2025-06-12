@@ -180,7 +180,7 @@ class MockResponse implements ResponseInterface, StreamableInterface
     /**
      * {@inheritdoc}
      */
-    protected static function perform(ClientState $multi, array &$responses): void
+    protected static function perform(ClientState $multi, array $responses): void
     {
         foreach ($responses as $response) {
             $id = $response->id;
