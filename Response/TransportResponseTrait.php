@@ -99,7 +99,7 @@ trait TransportResponseTrait
     /**
      * Performs all pending non-blocking operations.
      */
-    abstract protected static function perform(ClientState $multi, array &$responses): void;
+    abstract protected static function perform(ClientState $multi, array $responses): void;
 
     /**
      * Waits for network activity.
@@ -238,7 +238,6 @@ trait TransportResponseTrait
                             }
                         } elseif ($chunk instanceof ErrorChunk) {
                             unset($responses[$j]);
-                            $elapsedTimeout = $timeoutMax;
                         } elseif ($chunk instanceof FirstChunk) {
                             if ($response->logger) {
                                 $info = $response->getInfo();
@@ -285,10 +284,12 @@ trait TransportResponseTrait
                     if ($chunk instanceof ErrorChunk && !$chunk->didThrow()) {
                         // Ensure transport exceptions are always thrown
                         $chunk->getContent();
+                        throw new \LogicException('A transport exception should have been thrown.');
                     }
                 }
 
                 if (!$responses) {
+                    $hasActivity = true;
                     unset($runningResponses[$i]);
                 }
 
@@ -302,7 +303,7 @@ trait TransportResponseTrait
             }
 
             if ($hasActivity) {
-                $lastActivity = microtime(true);
+                $lastActivity ??= hrtime(true) / 1E9;
                 continue;
             }
 
