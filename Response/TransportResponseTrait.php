@@ -197,7 +197,8 @@ trait TransportResponseTrait
                         continue;
                     }
 
-                    $lastActivity = null;
+                    // Removed $lastActivity due to ticket: MSR-5567 - setting to null results in strange $elapsedTimeout results
+                    // $lastActivity = null;
                     $hasActivity = true;
 
                     while ($multi->handlesActivity[$j] ?? false) {
